@@ -1,0 +1,615 @@
+---
+title: "Final_FA800"
+author: "Sishir Yerra Doddi"
+date: "12/13/2021"
+output: pdf_document
+---
+
+```{r}
+set.seed(100)
+#Packages
+library(ISLR)
+library(boot)
+library(quantmod)
+library(xts)
+library(PerformanceAnalytics)
+library(PortfolioAnalytics)
+library(mosaic)
+library(dplyr)
+library(corrplot)
+#library(resample)
+#library(ggplot2)
+library(plotly)
+```
+
+```{r}
+#Mean Varaince Optimization
+tickers <- c('VOX', 'VCR', 'VDC', 'VDE', 'VFH', 'VHT', 'VIS', 'VGT', 'VAW', 'VNQ', 'VPU')
+
+port <- NULL
+for(ticker in tickers) {
+  port <- cbind(port, getSymbols.yahoo(ticker, from="2011-01-01", to = "2020-12-31", periodicity = 'daily', auto.assign=FALSE)[,4])
+}
+
+Stock_Returns <- na.omit(ROC(port))
+
+portf <- portfolio.spec(colnames(Stock_Returns))
+portf <- add.constraint(portf, type="weight_sum", min_sum=1, max_sum=1)
+portf <- add.constraint(portf, type="box", min=0.0125, max=.375)
+portf <- add.objective(portf, type="return", name="mean")
+portf <- add.objective(portf, type="risk", name="StdDev")
+
+optPort <- optimize.portfolio(Stock_Returns, portf, optimize_method = "ROI", trace=TRUE)
+optPort
+
+chart.Weights(optPort)
+
+#Efficient frontier
+ef <- extractEfficientFrontier(optPort, match.col = "StdDev", n.portfolios = 25,
+                               risk_aversion = NULL)
+
+chart.EfficientFrontier(ef,
+                        match.col = "StdDev", n.portfolios = 25, xlim = NULL, ylim = NULL,
+                        cex.axis = 0.8, element.color = "darkgray", main = "Efficient Frontier",
+                        RAR.text = "SR", rf = 0, tangent.line = TRUE, cex.legend = 0.8,
+                        chart.assets = TRUE, labels.assets = TRUE, pch.assets = 21,
+                        cex.assets = 0.8)
+```
+
+```{r}
+# defining my portfolio weights
+optPort
+weight <- c(0.0125, 0.3750, 0.0125, 0.0125, 0.0125, 0.1500, 0.0125, 0.3750, 0.0125, 0.0125, 0.0125); length(weight)
+head(Stock_Returns)
+#return of portfolio after adjusting weights 
+port_returns <- Return.portfolio(Stock_Returns, weights = weight, rebalance_on = "years")
+tail(port_returns)
+port_returns_mean <- colMeans(port_returns)
+port_returns_sd   <- sd(port_returns)
+VaR(port_returns, p=.95, method = "historical")
+plot(cumsum(port_returns)); plot(port_returns)
+```
+
+```{r}
+#Using stock weights to compute portfolio return
+weight <- c(0.0125, 0.3750, 0.0125, 0.0125, 0.0125, 0.1500, 0.0125, 0.3750, 0.0125, 0.0125, 0.0125); length(weight)
+head(Stock_Returns)
+port_returns <- Return.portfolio(Stock_Returns, weights = weight, rebalance_on = "years")
+head(port_returns)
+plot(cumsum(port_returns)); plot(port_returns)
+```
+
+
+
+
+```{r}
+
+
+class(port_returns) #XTS zoo
+
+m.idx <- index(port_returns)
+#rm(e, tickers)
+#?coredata
+#Evaluating portfolio performance and porforlio  risk
+getport_returnsRisk = function(port_returns){
+  dat <- new.env()
+  ii <- 1
+  #MARKET Risk
+  bm = "^GSPC"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31",auto.assign = FALSE),name = bm)),type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model 
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Market RISK")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  # Fed FUnds Rate: Interest Rate Risk
+  bm = "FEDFUNDS"
+  RISK = ROC(getSymbols.FRED(bm, env = .GlobalEnv, auto.assign=FALSE), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Fed Funds Rate")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #TECHNOLOGY SECTOR Risk
+  bm = "XLK"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31",auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Technology Sector")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #Vanguard Energy sector risk
+  bm = "VDE"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Energy Sector")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #Vanguard real estate risk
+  bm = "VNQ"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Real Estate Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  # Vanguard health care Risk
+  bm = "VHT"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Health care Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  # Vanguard financial sector risk
+  bm = "VFH"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01",to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard financial Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #Vanguard Industrail sector risk
+  bm = "VIS"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard industrail Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #Vanguard Informational technology Risk 
+  bm = "VGT"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Informational technology Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #Vanguard material sector risk
+  bm = "VAW"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard material Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  # Vanguard Utility sector Risk
+  bm = "VPU"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Utility Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  # Vanhuard Communication servies risk 
+  bm = "VOX"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Communication services Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #Vanguard Consumer discretionary Risk 
+  bm = "VCR"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Consumer Discretionary Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  #Vanguard Consumer Staple Risk
+  bm = "VDC"
+  RISK = ROC(Ad(to.daily(getSymbols(bm, from="2011-01-01", to = "2020-12-31", auto.assign = FALSE),name = bm)), type = "discrete")
+  RISK <- RISK[m.idx]
+  tmp <- merge(port_returns, RISK)
+  tmp[is.na(tmp)] <- 0
+  #linear Model
+  LM <- lm(tmp[,1] ~ tmp[,2])
+  #anualized alpha/beta0
+  ALPHA <- round(as.numeric(coef(LM)[1]*12),4)
+  BETA <- round(as.numeric(coef(LM)[2]),4)
+  COR <- round(as.numeric(cor(tmp[,1],tmp[,2])),4)
+  PVAL <- cbind(round(cbind(as.numeric(summary(LM)$coefficients[,4][1]),
+                            as.numeric(summary(LM)$coefficients[,4][2])),2)) 
+  assign(paste0("RISK",ii), as.data.frame(cbind(BETA,COR,ALPHA,PVAL,bm,"Vanguard Consumer Staple Sector Risk")), envir = dat); ii = ii+1
+  rm(RISK,ALPHA,BETA,COR,LM,tmp)
+  ALL <- do.call(rbind,mget(names(dat), envir = dat))
+  colnames(ALL)[4:7] <- c("Pvalue_ALPHA", "Pvalue_BETA", "BM", "RISK")
+  ALL
+}
+
+ALL <-getport_returnsRisk(port_returns)
+ALL <- ALL[order(ALL$ALPHA, decreasing = TRUE),]
+plot_ly(x=~ALL$BETA, y=~ALL$COR, z=~ALL$ALPHA, type = "scatter3d",mode="markers",color = ALL$RISK)
+#From Graph, X is Beta, Z is Alpha & Y is Correlation
+#we can see that federal funds rates beta is close to zero, so we can assume that it is not correlated with the port_returnsfolio, 30% intercept/Alpha as per the linear model
+#for Market Risk and technology sector we can see high correlation about 80%
+
+#Capital Asset Pricing model to extract what our expected port_returnsfolio value is by inserting a market return for our choosing
+ExpRet = function(ERm, Rf, Beta){
+  ERp = Rf + Beta*(ERm - Rf)
+  round(ERp, 4)
+} 
+
+
+
+#Stress Test
+Erm = .15 #Expected Market Return
+Erm = 0.000337663 #Expected Market return LSTM
+Erm = -0.003262702 # Expected market return of augmented data
+Rf = .0175 #Risk Free Rate
+ALL$AUG_Change <- ExpRet(ERm = Erm, Rf = Rf, Beta = as.numeric(ALL$BETA))
+#as per the CAPM model if the FFR decreases by 25%, my port_returnsfolio will go up roughly 2 percent and Probability of the beta is 33%, it is reliable but I would explore other models to measure what the risk is against the FFR
+#If the tech sector/market falls by 25%, my port_returnsfolio falls by respectively 37% and 32%
+View(ALL)
+
+```
+
+```{r}
+#assessing the variables with the most number of significant correlation
+#Correlation plot
+aa= cor(Stock_Returns, method = "pearson")
+corrplot(cor(Stock_Returns, method = "pearson"), method = "circle")
+
+for (i in 1:nrow(aa)){
+  correlations <-  which((aa[i,] > 0.85) & (aa[i,] != 1))
+  
+  if(length(correlations)> 0){
+    print(colnames(Stock_Returns)[i])
+    print(correlations)
+  }
+}
+
+```
+
+```{r}
+pret <-  as.data.frame(port_returns)
+
+holdings = weights * wealth
+
+return_today <- pret[resample(nrow(pret), 1), ]
+sim1 = do(1000)*{
+  wealth = 1000000
+  timeframe = 252
+  weights = c(0.0125, 0.3750, 0.0125, 0.0125, 0.0125, 0.1500, 0.0125, 0.3750, 0.0125, 0.0125, 0.0125)
+  holdings = holdings + holdings*return_today
+  wealth_tracker <- c()
+  totalwealth = sum(holdings)
+  for(today in 1:timeframe){
+    return_today <- pret[resample(nrow(pret), 1), ]
+    holdings = weights * wealth
+    holdings = holdings + holdings*return_today
+    totalwealth = sum(holdings)
+    wealth_tracker[today] = totalwealth
+  }
+  totalwealth
+}
+
+plot(wealth_tracker)
+head(sim1)
+hist(sim1$result, 100, main = "Histogram of simulated results") + abline(v=mean(sim1$result), col="blue", lwd=1)
+sd(sim1$result)
+
+
+
+
+
+
+v95 <- quantile(port_returns,0.05,na.rm = T)
+#Value at Risk
+
+Profit = sim1$result - 1000000
+Var05 = qdata(Profit/1000000, c(.05)) #calculate 5% value at risk
+Port_VaR_95 = Var05
+Port_VaR_95
+hist(Profit/1000000, 250, sub = "2011-2020") 
+abline(v=Var05, col=c("red"), lwd=1) 
+abline(v=mean(Profit/1000000), col="blue", lwd=1)
+
+```
+
+```{r}
+
+```
+
+
+
+
+```{r}
+getSymbols("SPY", from="2000-01-01", to = "2020-12-31")
+SPY <- SPY$SPY.Adjusted 
+colnames(SPY) <- "SPY"
+ret_SPY <- na.omit(ROC(SPY))
+head(ret_SPY)
+pret_SPY <- as.data.frame(ret_SPY)
+#DOTCOM CRASH
+port_Dotcom <- ret_SPY["2000/2003-01-03"]
+holdings = weights * wealth
+return_today <- port_Dotcom[resample(nrow(port_Dotcom), 1), ]
+
+#Monte Carlo simulation 
+sim2 = do(1000)*{
+  wealth = 1000000
+  timeframe = 252
+  weights = 1.0
+  holdings = holdings + holdings*return_today
+  wealth_tracker <- c()
+  totalwealth = sum(holdings)
+  for(today in 1:timeframe){
+    return_today <- port_Dotcom[resample(nrow(port_Dotcom), 1), ]
+    holdings = weights * wealth
+    holdings = holdings + holdings*return_today
+    totalwealth = sum(holdings)
+    wealth_tracker[today] = totalwealth
+  }
+  totalwealth
+}
+
+hist(sim2$result, 100)
+mean(sim2$result)
+sd(sim2$result)
+
+
+
+#Value at Risk
+Profit = sim2$result - 1000000
+#calculate 5% value at risk
+Var05 = qdata(Profit/1000000, c(.05))
+Dotcom_VaR_95 = Var05
+hist(Profit/1000000, 250, sub = "2000-2003 Dotcom burst", main = "Histogram of Profit")
+abline(v=Dotcom_VaR_95, col=c("red"), lwd=1)
+abline(v=mean(Profit/1000000), col="blue", lwd=1)
+```
+
+
+
+
+```{r}
+port_Fincir <- ret_SPY["2007/2009-07-03"]
+return_today <- port_Fincir[resample(nrow(port_Fincir), 1), ]
+#Monte Carlo simulation 
+sim3 = do(1000)*{
+  wealth = 1000000
+  timeframe = 252
+  weights = 1
+  holdings = holdings + holdings*return_today
+  wealth_tracker <- c()
+  totalwealth = sum(holdings)
+  for(today in 1:timeframe){
+    return_today <- port_Fincir[resample(nrow(port_Fincir), 1), ]
+    holdings = weights * wealth
+    holdings = holdings + holdings*return_today
+    totalwealth = sum(holdings)
+    wealth_tracker[today] = totalwealth
+  }
+  totalwealth
+}
+
+hist(sim3$result, 250)
+mean(sim3$result)
+sd(sim3$result)
+
+
+
+#Value at Risk
+Profit = sim3$result - 1000000
+#calculate 5% value at risk
+Var05 = qdata(Profit/1000000, c(.05))
+Fincri_VaR_95 = Var05
+hist(Profit/1000000, 250, sub = "2007-2009 financial crisis", main = "Histogram of Profit")
+abline(v=Fincri_VaR_95, col=c("red","green"), lwd=1)
+abline(v=mean(Profit/1000000), col="blue", lwd=1)
+```
+
+
+
+
+```{r}
+port_Covid <- ret_SPY["2020/2021-01-03"]
+return_today <- port_Covid[resample(nrow(port_Covid), 1, replace = TRUE), ]
+#Monte Carlo simulation 
+sim4 = do(2000)*{
+  wealth = 1000000
+  timeframe = 252
+  weights = 1
+  holdings = holdings + holdings*return_today
+  wealth_tracker <- c()
+  totalwealth = sum(holdings)
+  for(today in 1:timeframe){
+    return_today <- port_Covid[resample(nrow(port_Covid), 1, replace = TRUE), ]
+    holdings = weights * wealth
+    holdings = holdings + holdings*return_today
+    totalwealth = sum(holdings)
+    wealth_tracker[today] = totalwealth
+  }
+  totalwealth
+}
+
+hist(sim4$result, 250)
+mean(sim4$result)
+sd(sim4$result)
+
+
+
+#Value at Risk
+Profit = sim4$result - 1000000
+#calculate 5% value at risk
+Var05 = qdata(Profit/1000000, c(.05))
+Covid19_VaR_95 = Var05
+hist(Profit/1000000, 250, sub = "2020-2021 Covid-19", main = "Histogram of Profit")
+abline(v=Var05, col=c("red"), lwd=1)
+abline(v=mean(Profit/1000000), col="blue", lwd=1)
+
+
+
+VaR_at_different_periods <- data.frame(Dotcom_VaR_95, Fincri_VaR_95, Covid19_VaR_95)
+VaR_at_different_periods
+```
+
+
+
+```{r}
+ALL
+head(port)
+weight <- c(0.0125, 0.3750, 0.0125, 0.0125, 0.0125, 0.1500, 0.0125, 0.3750, 0.0125, 0.0125, 0.0125); length(weight)
+port_update <- port["2020"]
+port_2020 <- reclass(coredata(port_update) %*% c(0.0125, 0.3750, 0.0125, 0.0125, 0.0125, 0.1500, 0.0125, 0.3750, 0.0125, 0.0125, 0.0125), match.to = port_update)
+port_2022 <- reclass(coredata(port_update) %*% c(rep(1/ncol(port_update), ncol(port_update))), match.to = port_update)
+colnames(port_2020) <- c("2020 Portfolio")
+head(port_2020)
+```
+
+
+
+```{r}
+VaR_at_different_periods 
+#streassing the portfolio with 95% loss factos
+port_2020_Dotcom <- port_2020 + port_2020*Dotcom_VaR_95
+port_2020_FinCri <- port_2020 + port_2020*Fincri_VaR_95
+port_2020_Covid19 <- port_2020 + port_2020*Covid19_VaR_95
+#Stressted vs original portfolio under DotCom Risk
+plot(port_2020_Dotcom, col = "blue", ylim = c(140,260))
+lines(port_2020_FinCri, col = "red")
+lines(port_2020_Covid19, col = "green")
+lines(port_2020, col = "black")
+#Stressed vs original portfolio under Covid risk
+plot(port_2020_Covid19, col = "blue", ylim = c(100,300))
+lines(port_2020, col = "red")
+```
+
+```{r}
+ALL
+
+```
+
+
+
+```{r}
+#applying Risk to portfolio
+head(port_update)
+plot(SPY["2020"])
+plot(port_2020, col = "blue", ylim = c(100,300))
+lines(port_2022, col = "red")
+
+#using only 2020 data 
+port_2020 <- port_update["2020"]
+
+
+
+plot(port_2020)
+lines(ALL_Risk1)
+text(x=ALL_Risk1[m.idx], y = ALL_Risk1, labels(ALL_Risk1))
+lines(port_finrisk_2020_5, col = "red"); color = ALL$RISK
+lines(port_finrisk_2020_95, col = "blue")
+
+head(port_update)
+
+ALL$ALPHA <- as.numeric(ALL$ALPHA)
+class(ALL$ALPHA)
+```
+
